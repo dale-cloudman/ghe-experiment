@@ -157,6 +157,178 @@ class CmdLine:
 
         # print min and m
 
+    def twoway_rad_solver(self, T1, T2, e1, e2, f12, A1, A2):
+        from scipy.optimize import least_squares
+        sb = 5.670374419e-8
+
+        print(T1, T2, e1, e2, f12, A1, A2)
+
+        Eb1 = sb * T1 ** 4
+        Eb2 = sb * T2 ** 4
+
+        R1 = (1 - e1) / (A1 * e1)
+        R2 = (1 - e2) / (A2 * e2)
+        R12 = 1 / (A1 * f12)
+
+        print(Eb1 - Eb2)
+        print(R1, R12, R2)
+
+        Q1 = (Eb1 - Eb2) / (R1 + R12 + R2)
+        print("Heat flow at surf 1:", Q1)
+        return Q1
+
+        # def equations(vars):
+        #     J1, J2 = vars
+        #
+        #     eqs = [
+        #         (Eb1 - J1) / R1 + (J2 - J1) / R12,
+        #         (Eb2 - J2) / R2 + (J1 - J2) / R12,
+        #     ]
+        #     return eqs
+        #
+        # # Initial guess for J1, J2
+        # initial_guess = [1, 1]
+        #
+        # # Use least squares to find the best fitting U and h
+        # result = least_squares(equations, initial_guess)
+        # print("radiosities:", result.x)
+        # j1, j2 = result.x
+        #
+        # Q1 = (j1 - j2) / R12
+        # print("Heat flow at surf 1:", Q1)
+        # return Q1
+
+    def threeway_rad_solver(self, T1, T2, T3, e1, e2, e3, f12, f13, f23, A1, A2, A3):
+        from scipy.optimize import least_squares
+        sb = 5.670374419e-8
+
+        Eb1 = sb * T1 ** 4
+        Eb2 = sb * T2 ** 4
+        Eb3 = sb * T3 ** 4
+
+        R1 = (1 - e1) / (A1 * e1)
+        R2 = (1 - e2) / (A2 * e2)
+        R3 = (1 - e3) / (A3 * e3)
+        R12 = 1 / (A1 * f12)
+        R13 = 1 / (A1 * f13)
+        R23 = 1 / (A2 * f23)
+
+        def equations(vars):
+            J1, J2, J3 = vars
+
+            eqs = [
+                (Eb1 - J1) / R1 + (J2 - J1) / R12 + (J3 - J1) / R13,
+                (Eb2 - J2) / R2 + (J1 - J2) / R12 + (J3 - J2) / R23,
+                (Eb3 - J3) / R3 + (J1 - J3) / R13 + (J2 - J3) / R23,
+            ]
+            return eqs
+
+        # Initial guess for J1, J2, J3
+        initial_guess = [1, 1, 1]
+
+        # Use least squares to find the best fitting U and h
+        result = least_squares(equations, initial_guess)
+        print("radiosities:", result.x)
+        j1, j2, j3 = result.x
+
+        Q1 = (j1 - j2) / R12 + (j1 - j3) / R13
+        print("Heat flow at surf 1:", Q1)
+        return Q1
+
+    def box2_rad_solver(self, Tbotc, Totherc, botmat, othermat):
+        assert botmat in ('foil', 'black')
+        assert othermat in ('foil', 'black')
+
+        e1 = 0.95 if botmat == 'black' else 0.05
+        e2 = 0.95 if othermat == 'black' else 0.05
+
+        Tbotk = Tbotc + 273.15
+        Totherk = Totherc + 273.15
+
+        return self.twoway_rad_solver(
+            T1=Tbotk, T2=Totherk,
+            e1=e1, e2=e2,
+            f12=1.0,
+            A1=0.25*0.25, A2=0.25*0.25*5,
+        )
+
+    def box3_rad_solver(self, Tbotc, Ttopc, botmat, midmat, topmat):
+        assert botmat in ('foil', 'black')
+        assert midmat in ('foil', 'black')
+        assert topmat in ('foil', 'black')
+
+        e1 = 0.95 if botmat == 'black' else 0.05
+        e2 = 0.95 if midmat == 'black' else 0.05
+        e3 = 0.95 if topmat == 'black' else 0.05
+
+        Tbotk = Tbotc + 273.15
+        Ttopk = Ttopc + 273.15
+
+        Tmidk = (Tbotk + Ttopk) / 2
+
+        return self.threeway_rad_solver(
+            T1=Tbotk, T2=Tmidk, T3=Ttopk,
+            e1=e1, e2=e2, e3=e3,
+            f12=0.8, f13=0.2, f23=0.2,
+            A1=0.25*0.25, A2=0.25*0.25*4, A3=0.25*0.25,
+        )
+
+    def fitit(self):
+        from scipy.optimize import least_squares
+        import numpy as np
+
+        eq_data = [
+            # 2way rad calcs
+            # (10.145, 40.89, 24.65, 2.036),
+            # (10.735, 42.53, 25.63, 2.147),
+            # (11.353, 44.62, 26.92, 2.298),
+            # (11.988, 46.7, 28.18, 2.429),
+            # (12.64, 48.83, 29.37, 2.572),
+            # (13.997, 53.19, 31.95, 2.887),
+            # (10.179, 42.01, 23.01, 1.980),
+            # (12.008, 47.47, 27.43, 2.405),
+            # (10.208, 46.56, 19.13, 1.830),
+
+            # 3way rad calcs
+            (10.145, 40.89, 24.65, 1.546),
+            (10.735, 42.53, 25.63, 1.627),
+            (11.353, 44.62, 26.92, 1.750),
+            (11.988, 46.7, 28.18, 1.851),
+            (12.64, 48.83, 29.37, 1.967),
+            (13.997, 53.19, 31.95, 2.207),
+            (10.179, 42.01, 23.01, 1.475),
+            (12.008, 47.47, 27.43, 1.826),
+            (10.208, 46.56, 19.13, 1.293),
+
+            # allfoil
+            (11.675, 54.1, 27.2, 0.360),
+            (11.136, 52.3, 25.7, 0.360),
+            (11.307, 52.39, 25.85, 0.360),
+            (10.630, 53.22, 21.23, 0.300),
+        ]
+
+        # Define the equations in a function
+        def equations(vars):
+            U, h, f1, f2 = vars
+
+            eqs = []
+            for real_value, room_bot_t, bot_top_t, rad_est in eq_data:
+                rad = rad_est
+
+                eq = U * 0.0625 * room_bot_t + h * 0.0625 * bot_top_t + rad - real_value
+                eqs.append(eq)
+
+            eqs.append(h - 2.37)
+            eqs.append(U - 1.84)
+            return eqs
+
+        # Initial guess for U and h
+        initial_guess = [1, 1, 0, 0]
+
+        # Use least squares to find the best fitting U and h
+        result = least_squares(equations, initial_guess)
+        print(result.x)
+
 
 if __name__ == '__main__':
     fire.Fire(CmdLine)
