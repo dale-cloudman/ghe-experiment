@@ -1,3 +1,6 @@
+import pprint
+
+import numpy as np
 import tabulate
 import pandas as pd
 import fire
@@ -133,11 +136,14 @@ class CmdLine:
         for col in df.columns[1:]:
             minval = df[(df['Date/Time'] >= start_time) & (df['Date/Time'] < end_time)][col].min()
             maxval = df[(df['Date/Time'] >= start_time) & (df['Date/Time'] < end_time)][col].max()
+
+            mean = df[(df['Date/Time'] >= start_time) & (df['Date/Time'] < end_time)][col].mean()
+            std = df[(df['Date/Time'] >= start_time) & (df['Date/Time'] < end_time)][col].std()
             # use %.3f for power, otherwise %.1f
             if col == 'HPPower':
-                print("%-15s: %.3f - %.3f" % (col, minval, maxval))
+                print("%-15s: %6.3f - %6.3f, %6.3f +/- %6.3f" % (col, minval, maxval, mean, 2*std))
             else:
-                print("%-15s: %.1f - %.1f" % (col, minval, maxval))
+                print("%-15s: %6.1f - %6.1f, %6.2f +/- %6.2f" % (col, minval, maxval, mean, 2*std))
 
         # drop all but <-> cols and Date/Time and HPPower
         df = df[['Date/Time', 'HPPower'] + [col for col in df.columns if '<->' in col]]
@@ -228,11 +234,11 @@ class CmdLine:
 
         # Use least squares to find the best fitting U and h
         result = least_squares(equations, initial_guess)
-        print("radiosities:", result.x)
+        # print("radiosities:", result.x)
         j1, j2, j3 = result.x
 
         Q1 = (j1 - j2) / R12 + (j1 - j3) / R13
-        print("Heat flow at surf 1:", Q1)
+        # print("Heat flow at surf 1:", Q1)
         return Q1
 
     def box2_rad_solver(self, Tbotc, Totherc, botmat, othermat):
@@ -328,6 +334,55 @@ class CmdLine:
         # Use least squares to find the best fitting U and h
         result = least_squares(equations, initial_guess)
         print(result.x)
+
+    def fit_topc_given_botc_and_power(self):
+        # given data with powers and bottom temp and room temp
+        # predict top temp
+        pass
+
+    def pred(self, power_w, Troomc):
+        U = 2.151
+        h = 2.245
+
+        Troomk = Troomc + 273.15
+
+        for room_botk in np.arange(30, 70, 1):
+            Tbotk = Troomk + room_botk
+
+            errs = []
+            for bot_topk in np.arange(0, 50, 0.1):
+                Ttopk = Tbotk - bot_topk
+
+                cond = U * 0.0625 * (Tbotk - Troomk)
+                conv = h * 0.0625 * (Tbotk - Ttopk)
+                rad = self.box3_rad_solver(
+                    Tbotc=Tbotk - 273.15,
+                    Ttopc=Ttopk - 273.15,
+                    botmat='black',
+                    midmat='foil',
+                    topmat='foil',
+                )
+
+                pred_w = cond + conv + rad
+                # print("Tbotk - Troomk:", Tbotk - Troomk)
+                # print("Tbotk - Ttopk:", Tbotk - Ttopk)
+                # print("cond + conv + rad = %.2f + %.2f + %.2f = %.2f" % (cond, conv, rad, pred_w))
+                # print("-", Tbotc, Ttopc, pred_w)
+                err = abs(power_w - pred_w)
+                errs.append({
+                    'room_botk': room_botk,
+                    'bot_topk': bot_topk,
+                    'err': err,
+                })
+
+            best = min(errs, key=lambda x: abs(x['err']))
+            print("Best for room<->bot=%.1fK: bot<->top=%.1fK, bot=%.1fc, top=%.1fc @ err=%.3f" % (
+                best['room_botk'],
+                best['bot_topk'],
+                Troomk + best['room_botk'] - 273.15,
+                Troomk + best['room_botk'] - best['bot_topk'] - 273.15,
+                best['err'],
+            ))
 
 
 if __name__ == '__main__':
