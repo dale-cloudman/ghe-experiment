@@ -384,6 +384,252 @@ class CmdLine:
                 best['err'],
             ))
 
+    def pred2(self, current, roomC, topC):
+        U = 2.151
+        h = 2.245
+
+        resf = open("tmp.csv", "w")
+
+        resf.write("roomC,topC,predbotC\n")
+
+        for roomC in [23.5, 24, 24.5, 25, 25.5]:
+            for topC in np.arange(54, 74, 0.1):
+                errs = []
+                for bottempC in np.arange(70, 95, 0.1):
+                    resistance = 0.0031777907*bottempC + 2.9267924598
+                    power = current * current * resistance
+
+                    cond = U * 0.0625 * (bottempC - roomC)
+                    conv = h * 0.0625 * (bottempC - topC)
+                    rad = self.box3_rad_solver(
+                        Tbotc=bottempC,
+                        Ttopc=topC,
+                        botmat='black',
+                        midmat='foil',
+                        topmat='foil',
+                    )
+
+                    pred_w = cond + conv + rad
+                    err = power - pred_w
+                    errs.append({
+                        'bottempC': bottempC,
+                        'err': err,
+                        'power': power,
+                        'pred_w': pred_w,
+                    })
+                    # print("For bot=%.1fC, predicted power=%.3fW, predicted heat loss=%.3fW, err=%.3f" % (
+                    #     bottempC, power, pred_w, err
+                    # ))
+
+                best = min(errs, key=lambda x: abs(x['err']))
+                print("If room=%.1fC and current=%.3fA and top=%.1fC, then bottom predicted to be %.1fC" % (
+                    roomC, current, topC, best['bottempC']
+                ))
+                resf.write(f"{roomC:.2f},{topC:.2f},{best['bottempC']:.2f}\n")
+
+    def platesolver_v1(self):
+        from scipy.optimize import least_squares
+
+        sky = 240
+        solar1 = 1359 - 1250
+        solar2 = 1250 - 1150
+        solar3 = 1150 - 1058
+        solar4 = 1058 - 974
+        solarB = 974
+
+        def equations(vars):
+            P1, P2, P3, P4, PB = vars
+
+            eqs = [
+                # top glass in = out
+                solar1 + P2 + sky - 2*P1,
+                solar2 + P3 + P1 - 2*P2,
+                solar3 + P4 + P2 - 2*P3,
+                solar4 + PB + P3 - 2*P4,
+                # bottom plate
+                solarB + P4 - PB,
+            ]
+            return eqs
+
+        initial_guess = [100, 100, 100, 100, 100]
+
+        # Use least squares to find the best fitting U and h
+        result = least_squares(equations, initial_guess)
+        print("resuts:", result.x)
+
+    def platesolver_v2(self):
+        from scipy.optimize import least_squares
+
+        sky = 240
+        solar1 = 0
+        solar2 = 0
+        solar3 = 0
+        solar4 = 0
+        solarB = 974
+
+        def equations(vars):
+            P1, P2, P3, P4, PB = vars
+
+            eqs = [
+                # top glass in = out
+                solar1 + P2 + sky - 2*P1,
+                solar2 + P3 + P1 - 2*P2,
+                solar3 + P4 + P2 - 2*P3,
+                solar4 + PB + P3 - 2*P4,
+                # bottom plate
+                solarB + P4 - PB,
+            ]
+            return eqs
+
+        initial_guess = [100, 100, 100, 100, 100]
+
+        # Use least squares to find the best fitting U and h
+        result = least_squares(equations, initial_guess)
+        print("resuts:", result.x)
+
+    def platesolver_v3(self):
+        from scipy.optimize import least_squares
+
+        for f in np.arange(0.01, 1.00, 0.01):
+            sky = 240
+            # solar1 = 1359 - 1250
+            # solar2 = 1250 - 1150
+            # solar3 = 1150 - 1058
+            # solar4 = 1058 - 974
+            solar1 = 0
+            solar2 = 0
+            solar3 = 0
+            solar4 = 0
+            solarB = 974
+            bf = 1.0
+            def equations(vars):
+                P1, P2, P3, P4, PB = vars
+
+                eqs = [
+                    solar1 + sky*f + P2*f + P3*(1-f)*f + P4*(1-f)**2*f + PB*(1-f)**3*f - 2*P1,
+                    solar2 + sky*(1-f)*f + P1*f + P3*f + P4*(1-f)*f + PB*(1-f)**2*f - 2*P2,
+                    solar3 + sky*(1-f)**2*f + P1*(1-f)*f + P2*f + P4*f + PB*(1-f)*f - 2*P3,
+                    solar4 + sky*(1-f)**3*f + P1*(1-f)**2*f + P2*(1-f)*f + P3*f + PB*f - 2*P4,
+                    solarB + sky*(1-f)**4*bf + P1*(1-f)**3*bf + P2*(1-f)**2*bf + P3*(1-f)*bf + P4*bf - PB,
+                ]
+                return eqs
+
+            initial_guess = [100, 100, 100, 100, 100]
+
+            # Use least squares to find the best fitting U and h
+            result = least_squares(equations, initial_guess)
+
+            sb = 5.670374419e-8
+            fs = [f, f, f, f, bf]
+            temps = np.array([(x / (sb * thisf))**(1/4)-273.15 for x, thisf in zip(result.x, fs)])
+
+            print("For f=%.2f, results=%s, temps=%s" % (
+                f, result.x, temps
+            ))
+
+    def platesolver_condconv(self):
+        # assuming 100% IR absortivity
+        from scipy.optimize import least_squares
+
+        # inputs
+        solar1 = 1359 - 1250
+        solar2 = 1250 - 1150
+        solar3 = 1150 - 1058
+        solar4 = 1058 - 974
+        solarB = 974
+
+        sky = 240
+
+        TairC = 2  # very cold!
+
+        # conductance bottom to outside
+        U = 5.1
+        # inner convection
+        h_inner = 2.5
+        # convection with outside air
+        h_outer = 12
+        # absorption fraction of glass of ir, rest is transmitted
+        f_ir = 0.92
+        bf_ir = 1.00  # black plate abosrb 100%
+
+        # constants
+        sb = 5.670374419e-8
+
+        def equations(vars):
+            T1, T2, T3, T4, TB = vars
+
+            P1rad = sb * f_ir * (T1 + 273.15) ** 4
+            P1conv = h_outer * (T1 - TairC)
+
+            P2rad = sb * f_ir * (T2 + 273.15) ** 4
+            P2conv = h_inner * (T2 - T1)
+
+            P3rad = sb * f_ir * (T3 + 273.15) ** 4
+            P3conv = h_inner * (T3 - T2)
+
+            P4rad = sb * f_ir * (T4 + 273.15) ** 4
+            P4conv = h_inner * (T4 - T3)
+
+            PBrad = sb * bf_ir * (TB + 273.15) ** 4
+            PBconv = h_inner * (TB - T4)
+            PBcond = U * (TB - TairC)
+
+            print("P1rad=%.2f, P1conv=%.2f" % (P1rad, P1conv))
+            print("P2rad=%.2f, P2conv=%.2f" % (P2rad, P2conv))
+            print("P3rad=%.2f, P3conv=%.2f" % (P3rad, P3conv))
+            print("P4rad=%.2f, P4conv=%.2f" % (P4rad, P4conv))
+            print("PBrad=%.2f, PBconv=%.2f, PBcond=%.2f" % (PBrad, PBconv, PBcond))
+
+            assert bf_ir == 1.00
+            eqs = [
+                # P1 gains its portion of solar, its portion of the radiation from sky and all else, and convection from P2
+                # P1 loses its convection to the outside air, and its own emission
+                (solar1 + P2conv + sky*f_ir + P2rad*f_ir+ P3rad*(1-f_ir)*f_ir + P4rad*(1-f_ir)**2*f_ir + PBrad*(1-f_ir)**3*f_ir) - (P1conv + 2*P1rad),
+                # P2-P4 similarly
+                (solar2 + P3conv + sky*(1-f_ir)*f_ir + P1rad*f_ir + P3rad*f_ir + P4rad*(1-f_ir)*f_ir + PBrad*(1-f_ir)**2*f_ir) - (P2conv + 2*P2rad),
+                (solar3 + P4conv + sky*(1-f_ir)**2*f_ir + P1rad*(1-f_ir)*f_ir + P2rad*f_ir + P4rad*f_ir + PBrad*(1-f_ir)*f_ir) - (P3conv + 2*P3rad),
+                (solar4 + PBconv + sky*(1-f_ir)**3*f_ir + P1rad*(1-f_ir)**2*f_ir + P2rad*(1-f_ir)*f_ir + P3rad*f_ir + PBrad*f_ir) - (P4conv + 2*P4rad),
+                # bottom: gains from solar & P4rad, loses from cond and conv and rad
+                (solarB + sky*(1-f_ir)**4*bf_ir + P1rad*(1-f_ir)**3*bf_ir + P2rad*(1-f_ir)**2*bf_ir + P3rad*(1-f_ir)*bf_ir + P4rad*bf_ir) - (PBcond + PBconv + PBrad),
+            ]
+            return eqs
+
+        initial_guess = [10]*5
+
+        # Use least squares to find the best fitting U and h
+        result = least_squares(equations, initial_guess)
+
+        temps = result.x
+        fs = [f_ir, f_ir, f_ir, f_ir, bf_ir]
+        emissions = np.array([sb * f * (x + 273.15) ** 4 for x, f in zip(temps, fs)])
+
+        print("temps=%s, emissions=%s" % (
+            temps, emissions,
+        ))
+
+        T1, T2, T3, T4, TB = temps
+        P1conv = h_outer * (T1 - TairC)
+        P2conv = h_inner * (T2 - T1)
+        P3conv = h_inner * (T3 - T2)
+        P4conv = h_inner * (T4 - T3)
+        PBconv = h_inner * (TB - T4)
+
+        PBcond = U * (TB - TairC)
+
+        print("CONv losses: P1=%.2f, P2=%.2f, P3=%.2f, P4=%.2f, PB=%.2f" % (
+            P1conv, P2conv, P3conv, P4conv, PBconv
+        ))
+        print("Cond losses from bottom to outside: %.2f" % PBcond)
+
+        T_between_12 = (T1 + T2) / 2
+        T_between_23 = (T2 + T3) / 2
+        T_between_34 = (T3 + T4) / 2
+        T_between_4B = (T4 + TB) / 2
+        print("After glass 1:", T_between_12)
+        print("After glass 2:", T_between_23)
+        print("After glass 3:", T_between_34)
+        print("After glass 4:", T_between_4B)
+
 
 if __name__ == '__main__':
     fire.Fire(CmdLine)
