@@ -28,6 +28,9 @@ def load_and_process_csv(csv_fn):
 
     df['tabletop_C'] = np.array(df['tabletop_C'], dtype=np.float64)
 
+    # remove rows with any nan values
+    df = df.dropna()
+
     pyran_k1 = 24.51
 
     # add column which is this k1 * the solar in V
@@ -50,14 +53,12 @@ def load_and_process_csv(csv_fn):
     ir_net_V = np.array(df['ir_net_V'], dtype=np.float64)
     df['ir_net_Wm2'] = pyrg_k1 * (ir_net_V*1000)
     df['ir_in_Wm2'] = ir_in_Wm2 = pyrg_k1 * (ir_net_V*1000) + pyrg_k2 * sb * thermistor_T_K**4
+    df['ir_out_Wm2'] = pyrg_k2 * sb * thermistor_T_K**4
+    df['total_in_Wm2'] = solar_in_Wm2 + ir_in_Wm2
 
-    # add a max_implied_C which i
-    df['max_implied_C'] = (
-        ((solar_in_Wm2 + ir_in_Wm2) / sb)**(1/4) - 273.15
+    df['max_implied_solar_C'] = (
+        ((solar_in_Wm2) / sb)**(1/4) - 273.15
     )
-
-    # remove rows with any nan values
-    df = df.dropna()
 
     return df
 
@@ -82,17 +83,27 @@ class CmdLine:
         # load it up to pandas dataframe
         df = load_and_process_csv(csv_fn)
 
+        # export as xls
+        df.to_excel('output.xlsx', index=False)
+
         # plot solar_in_Wm2 and ir_in_Wm2 on y axiw tih date on x
         import matplotlib.pyplot as plt
         fig, ax = plt.subplots()
 
         ax.plot(df['Date/Time'], df['solar_in_Wm2'], label='Solar')
-        ax.plot(df['Date/Time'], df['ir_in_Wm2'], label='IR')
+        ax.plot(df['Date/Time'], df['ir_in_Wm2'], label='IR (in)')
+        ax.plot(df['Date/Time'], df['ir_out_Wm2'], label='IR (out)')
+        ax.plot(df['Date/Time'], df['total_in_Wm2'], label='Total in')
         # set solar plot color to dark yellow
         ax.get_lines()[0].set_color('goldenrod')
         # IR to dark red
         ax.get_lines()[1].set_color('darkred')
-        ax.legend(title='Power')
+        # IR out to dark purple
+        ax.get_lines()[2].set_color('indigo')
+        # Total in to dark green
+        ax.get_lines()[3].set_color('darkgreen')
+        # legend upper in the center
+        ax.legend(title='Power', loc='upper center')
 
         # set x axis formatter to HH:MM
         ax.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%H:%M'))
@@ -110,12 +121,15 @@ class CmdLine:
         ax2 = ax.twinx()
         ax2.plot(df['Date/Time'], df['thermistor_T_C'], color='red', label='Thermistor')
         ax2.plot(df['Date/Time'], df['tabletop_C'], color='blue', label='Tabletop')
-        ax2.plot(df['Date/Time'], df['max_implied_C'], color='black', linestyle='dotted', label='Max Implied')
+        ax2.plot(df['Date/Time'], df['max_implied_solar_C'], color='black', linestyle='dotted', label='Max Implied Solar')
         # thinner lines
         ax2.get_lines()[0].set_linewidth(0.5)
         ax2.get_lines()[1].set_linewidth(0.5)
-        ax2.legend(title="Temperature")
+        # legend bottom-left
+        ax2.legend(title='Temperature', loc='lower left')
         ax2.set_ylabel('Temperature (ºC)')
+        # y axis: min 0, max 100
+        ax2.set_ylim(0, 100)
 
         plt.show()
 
