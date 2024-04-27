@@ -5,7 +5,7 @@ import fire
 import math
 
 
-def load_and_process_csv(csv_fn):
+def load_and_process_csv(csv_fn, temp_mappings=None):
     # load up the csv file
     df = pd.read_csv(csv_fn, encoding='utf8')
 
@@ -22,11 +22,13 @@ def load_and_process_csv(csv_fn):
         'No.1': 'solar_in_V',
         'No.2': 'ir_net_V',
         'No.3': 'thermistor_V',
-        'No.4': 'tabletop_C',
+        'No.4': 'exc_V',
+        **(temp_mappings or {}),
     }
     df = df.rename(columns=rename)
 
-    df['tabletop_C'] = np.array(df['tabletop_C'], dtype=np.float64)
+    for temp_key in temp_mappings.values():
+        df[temp_key] = np.array(df[temp_key], dtype=np.float64)
 
     # remove rows with any nan values
     df = df.dropna()
@@ -38,7 +40,7 @@ def load_and_process_csv(csv_fn):
     df['solar_in_Wm2'] = solar_in_Wm2 = pyran_k1 * (solar_in_V*1000)
 
     # calculate thermistor T:
-    excitation_voltage = 2.5
+    excitation_voltage = np.array(df['exc_V'], dtype=np.float64)
     Vr = np.array(df['thermistor_V'], dtype=np.float64) / excitation_voltage
     Rt = 24900 * (Vr/(1 - Vr))
     A = 9.32794e-4
@@ -80,8 +82,13 @@ class CmdLine:
         print("Fixed encoding for", csv_fn, "to utf8")
 
     def plot_raw(self, csv_fn):
-        # load it up to pandas dataframe
-        df = load_and_process_csv(csv_fn)
+        temp_mappings = {
+            'No.5': 'top_air_C',
+            'No.6': 'mid_air_C',
+            'No.7': 'black_bottom_C',
+        }
+
+        df = load_and_process_csv(csv_fn, temp_mappings=temp_mappings)
 
         # export as xls
         df.to_excel('output.xlsx', index=False)
@@ -90,20 +97,28 @@ class CmdLine:
         import matplotlib.pyplot as plt
         fig, ax = plt.subplots()
 
-        ax.plot(df['Date/Time'], df['solar_in_Wm2'], label='Solar')
-        ax.plot(df['Date/Time'], df['ir_in_Wm2'], label='IR (in)')
-        ax.plot(df['Date/Time'], df['ir_out_Wm2'], label='IR (out)')
-        ax.plot(df['Date/Time'], df['total_in_Wm2'], label='Total in')
-        # set solar plot color to dark yellow
-        ax.get_lines()[0].set_color('goldenrod')
-        # IR to dark red
-        ax.get_lines()[1].set_color('darkred')
-        # IR out to dark purple
-        ax.get_lines()[2].set_color('indigo')
-        # Total in to dark green
-        ax.get_lines()[3].set_color('darkgreen')
-        # legend upper in the center
-        ax.legend(title='Power', loc='upper center')
+        to_plot = df['solar_in_Wm2']
+        # cut off values < 700
+        to_plot[to_plot < 700] = np.nan
+        ax.plot(df['Date/Time'], to_plot, label='Solar')
+        ax.get_lines()[-1].set_color('#FF7F00')
+        ax.get_lines()[-1].set_linewidth(1)
+
+        ax.plot(df['Date/Time'], df['ir_in_Wm2'], label='Downwelling IR')
+        ax.get_lines()[-1].set_color('darkred')
+        ax.get_lines()[-1].set_linewidth(1)
+
+        ax.plot(df['Date/Time'], df['ir_net_Wm2'], linestyle=':', label='Net IR')
+        ax.get_lines()[-1].set_color('red')
+        ax.get_lines()[-1].set_linewidth(1)
+
+        # ax.plot(df['Date/Time'], df['ir_out_Wm2'], label='IR (out)')
+        # ax.get_lines()[-1].set_color('indigo')
+        #
+        # ax.plot(df['Date/Time'], df['total_in_Wm2'], label='Total in')
+        # ax.get_lines()[-1].set_color('darkgreen')
+
+        ax.legend(title='Power', loc='upper right')
 
         # set x axis formatter to HH:MM
         ax.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%H:%M'))
@@ -114,22 +129,44 @@ class CmdLine:
         # y axis label: W/m^2
         ax.set_ylabel('Power/Area (W/m^2)')
 
+        ax.set_ylim(-200, 1200)
+
+        # draw red horizontal line at 0
+        ax.axhline(0, color='red', linestyle='--', linewidth=1)
+
         # rotate x axis labels
         plt.xticks(rotation=45)
 
         # on a separate Y axis, plot the thermistor_T_C
         ax2 = ax.twinx()
-        ax2.plot(df['Date/Time'], df['thermistor_T_C'], color='red', label='Thermistor')
-        ax2.plot(df['Date/Time'], df['tabletop_C'], color='blue', label='Tabletop')
-        ax2.plot(df['Date/Time'], df['max_implied_solar_C'], color='black', linestyle='dotted', label='Max Implied Solar')
-        # thinner lines
-        ax2.get_lines()[0].set_linewidth(0.5)
-        ax2.get_lines()[1].set_linewidth(0.5)
+        ax2.plot(df['Date/Time'], df['thermistor_T_C'], color='coral', label='Thermistor')
+        ax2.get_lines()[-1].set_linewidth(0.5)
+        to_plot = df['max_implied_solar_C']
+        # cut out any < 60C
+        to_plot[to_plot < 60] = np.nan
+        ax2.plot(df['Date/Time'], to_plot, color='black', linestyle='--', label='Max Implied Solar')
+        ax2.get_lines()[-1].set_linewidth(0.5)
+
+        temp_colors = ['darkgoldenrod', 'gray', 'cyan', 'green']
+        for temp_i, temp_key in enumerate(temp_mappings.values()):
+            ax2.plot(df['Date/Time'], df[temp_key], label=temp_key, color=temp_colors[temp_i])
+            ax2.get_lines()[-1].set_linewidth(0.5)
+
         # legend bottom-left
         ax2.legend(title='Temperature', loc='lower left')
         ax2.set_ylabel('Temperature (ºC)')
         # y axis: min 0, max 100
         ax2.set_ylim(0, 100)
+
+        # add a thick blue vertical line at 2:00pm
+        ax.axvline(pd.to_datetime('14:00'), color='blue', linestyle='--', linewidth=2)
+        # and 3:45pm
+        ax.axvline(pd.to_datetime('15:45'), color='blue', linestyle='--', linewidth=2)
+        # and 5:04pm
+        ax.axvline(pd.to_datetime('17:04'), color='blue', linestyle='--', linewidth=2)
+
+        # title of graph: "Uncovered Box, 27 Apr 2024
+        ax.set_title("Uncovered Box, 27 Apr 2024")
 
         plt.show()
 
