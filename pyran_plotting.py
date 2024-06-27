@@ -18,7 +18,7 @@ pyrg_k2 = 1.028
 sb = 5.6704e-8
 
 
-def load_and_process_csv(csv_fn, temp_mappings=None, drop=None, baseline_env_Wm2=None):
+def load_and_process_csv(csv_fn, temp_mappings=None, drop=None, baseline_env_Wm2=None, offset_secs=None):
     # load up the csv file
     df = pd.read_csv(csv_fn, encoding='utf8')
 
@@ -34,6 +34,10 @@ def load_and_process_csv(csv_fn, temp_mappings=None, drop=None, baseline_env_Wm2
 
     # convert "Date/Time" col data to timestamp
     df['Date/Time'] = pd.to_datetime(df['Date/Time'])
+
+    if offset_secs:
+        # alter each date/time by this many seconds
+        df['Date/Time'] = df['Date/Time'] + pd.to_timedelta(offset_secs, unit='s')
 
     rename = {
         'No.1': 'solar_in_V',
@@ -72,6 +76,7 @@ def load_and_process_csv(csv_fn, temp_mappings=None, drop=None, baseline_env_Wm2
     df['ir_in_Wm2'] = ir_in_Wm2 = ir_net_Wm2 + pyrg_k2 * sb * thermistor_T_K**4
     df['ir_out_Wm2'] = pyrg_k2 * sb * thermistor_T_K**4
     df['total_in_Wm2'] = solar_in_Wm2 + ir_in_Wm2
+    df['solar_plus_net_ir_Wm2'] = solar_in_Wm2 + ir_net_Wm2
 
     df['max_implied_solar_C'] = (
         ((solar_in_Wm2) / sb)**(1/4) - 273.15
@@ -91,7 +96,7 @@ def load_and_process_csv(csv_fn, temp_mappings=None, drop=None, baseline_env_Wm2
     return df
 
 
-def load_and_process_logger_txt(txt_fn, temp_mappings=None):
+def load_and_process_logger_txt(txt_fn, temp_mappings=None, offset_secs=None):
     """Given filename to a file like this:
 
 MN/AT  date      time     int    1ch     2ch    3ch    4ch    unit
@@ -121,6 +126,10 @@ AT  2024-05-08 12:36:33   1m            51.8    62.1    75.6   C
 
     # convert "date" and "time" to timestamp
     df['Date/Time'] = pd.to_datetime(df['date'] + ' ' + df['time'])
+
+    if offset_secs:
+        # alter each date/time by this many seconds
+        df['Date/Time'] = df['Date/Time'] + pd.to_timedelta(offset_secs, unit='s')
 
     # drop "date" and "time" columns
     df = df.drop(columns=['date', 'time'])
@@ -154,7 +163,7 @@ AT  2024-05-08 12:36:33   1m            51.8    62.1    75.6   C
     return df
 
 
-def load_and_process_logger_txts(txt_dir, temp_mappings=None):
+def load_and_process_logger_txts(txt_dir, temp_mappings=None, offset_secs=None):
     """Given a directory, load all *.TXT files in it and merge into one df."""
 
     # get all txt files
@@ -166,7 +175,7 @@ def load_and_process_logger_txts(txt_dir, temp_mappings=None):
 
     # load each txt file into a df
     dfs = [
-        load_and_process_logger_txt(txt_fn, temp_mappings=temp_mappings)
+        load_and_process_logger_txt(txt_fn, temp_mappings=temp_mappings, offset_secs=offset_secs)
         for txt_fn in txt_fns
     ]
 
@@ -2098,7 +2107,7 @@ class CmdLine:
         normal_line_width = 2
         emphasis_line_width = 3
 
-        baseline_env_Wm2 = 540
+        baseline_env_Wm2 = 500
 
         temp_mappings = {
             'No.5': 'inside_air_C',
@@ -2324,6 +2333,473 @@ class CmdLine:
             vf_floor=0.46,
             ax=ax3,
         )
+
+        # save to .png
+        plt.tight_layout()
+        dest_fn = os.path.join(run_dir, run_bit + '.png')
+        plt.savefig(
+            dest_fn,
+            dpi=300,
+        )
+
+        plt.show()
+
+    def box3_3seran_cover_allday(self, csv_fn='~/Downloads/pyrgepyran/box3_3seran_cover_allday/box3_3seran_cover_allday.csv'):
+        import matplotlib.pyplot as plt
+
+        title = "12 May 2024; Box v3, 3 serans, pyrgeometer downwards, enclosed"
+
+        csv_fn = os.path.expanduser(csv_fn)
+        run_dir = os.path.dirname(csv_fn)
+        run_bit = os.path.basename(csv_fn).rsplit('.', 1)[0]
+
+        normal_line_width = 2
+        emphasis_line_width = 3
+
+        baseline_env_Wm2 = 540
+
+        temp_mappings = {
+            'No.5': 'inside_air_C',
+            'No.6': '3rd_layer_C',
+            'No.7': '2nd_layer_C',
+            'No.8': 'top_layer_uppermid_C',
+        }
+
+        logger_temp_mappings = {
+            '1ch': 'seran3_air_C',
+            '2ch': 'seran3_layer_C',
+            '3ch': 'top_layer_lowerleft_C',
+            '4ch': 'top_layer_lowermid_C',
+        }
+
+        df = load_and_process_csv(csv_fn, temp_mappings=temp_mappings, baseline_env_Wm2=baseline_env_Wm2)
+        df_logger = load_and_process_logger_txts(run_dir, temp_mappings=logger_temp_mappings)
+
+        # drop anything before 02:00
+        df = df[df['Date/Time'] > pd.to_datetime('13 May 2024, 02:00')]
+        df_logger = df_logger[df_logger['Date/Time'] > pd.to_datetime('13 May 2024, 02:00')]
+
+        # plot solar_in_Wm2 and ir_in_Wm2 on y axiw tih date on x
+        fig, (ax, ax2) = plt.subplots(
+            2,
+            1,
+            figsize=(12, 10),
+        )
+
+        ax.set_title(title)
+
+        to_plot = df['solar_in_Wm2']
+        ax.plot(df['Date/Time'], to_plot, label='Solar')
+        ax.get_lines()[-1].set_color('#DFDF00')
+        ax.get_lines()[-1].set_linewidth(normal_line_width)
+
+        ax.plot(df['Date/Time'], df['ir_net_Wm2'], label='Net IR')
+        ax.get_lines()[-1].set_color('red')
+        ax.get_lines()[-1].set_linewidth(normal_line_width)
+
+        ax.plot(df['Date/Time'], df['ir_in_Wm2'], linestyle=':', label='Upwards IR (from bottom)')
+        ax.get_lines()[-1].set_color('darkred')
+        ax.get_lines()[-1].set_linewidth(normal_line_width)
+
+        ax.plot(df['Date/Time'], df['ir_out_Wm2'], linestyle=':', label='Downwards IR (from pyrg)')
+        ax.get_lines()[-1].set_color('indigo')
+        ax.get_lines()[-1].set_linewidth(normal_line_width)
+
+        # ax.plot(df['Date/Time'], df['solar_plus_env_Wm2'], linestyle=':', label='Solar + Env')
+        # ax.get_lines()[-1].set_color('green')
+        # ax.get_lines()[-1].set_linewidth(normal_line_width)
+
+        # ax.plot(df['Date/Time'], df['total_in_Wm2'], linestyle=':', label='Solar + Downwelling IR')
+        # ax.get_lines()[-1].set_color('darkgreen')
+        # ax.get_lines()[-1].set_linewidth(normal_line_width)
+
+        # ax.plot(df['Date/Time'], df['cond_conv_loss_Wm2'], linestyle=':', label='Net Rad (Solar+Net IR)')
+        # ax.get_lines()[-1].set_color('cyan')
+        # ax.get_lines()[-1].set_linewidth(normal_line_width)
+
+        ax.legend(title='Power', loc='upper right')
+
+        # set x axis formatter to HH:MM
+        ax.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%H:%M'))
+
+        # x axis label: time (HH:MM)
+        ax.set_xlabel('Time (HH:MM)')
+
+        # y axis label: W/m^2
+        ax.set_ylabel('Power/Area (W/m^2)')
+
+        ax.set_ylim(-100, 800)
+
+        # draw red horizontal line at 0
+        ax.axhline(0, color='red', linestyle='--', linewidth=1)
+
+        # ax.axhline(baseline_env_Wm2, color='brown', linestyle='--', linewidth=1)
+        # # text above baseline env saying baseline env
+        # ax.text(
+        #     pd.to_datetime('12 May 2024, 16:30'),
+        #     baseline_env_Wm2 + 20,
+        #     "Baseline Env=%.0f W/m^2" % baseline_env_Wm2,
+        #     rotation=0,
+        #     color='brown',
+        # )
+
+        # rotate x axis labels
+        plt.setp(ax.get_xticklabels(), rotation=45)
+
+        # on a separate Y axis, plot the temps
+        to_plot = df['max_implied_solar_C']
+        ax2.plot(df['Date/Time'], to_plot, color='#DFDF00', linestyle=':', label='Max Implied Solar')
+        ax2.get_lines()[-1].set_linewidth(normal_line_width)
+
+        # to_plot = df['max_implied_solar_env_C']
+        # ax2.plot(df['Date/Time'], to_plot, color='darkgreen', linestyle=':', label='Max Implied Solar+Env')
+        # ax2.get_lines()[-1].set_linewidth(normal_line_width)
+
+        # to_plot = df['max_implied_total_C']
+        # ax2.plot(df['Date/Time'], to_plot, color='darkgreen', linestyle=':', label='Max Implied Total')
+        # ax2.get_lines()[-1].set_linewidth(normal_line_width)
+
+        temp_colors__wid = {
+            'thermistor_T_C': ('#ff33ff', normal_line_width),
+            'inside_air_C': ('cyan', normal_line_width),
+            'aluminum_C': ('gray', normal_line_width),
+            'styro_5mm_C': ('brown', normal_line_width),
+            'styro_surf_C': ('#4F0000', emphasis_line_width),
+            # '3rd_layer_C': ('gray', normal_line_width),
+            # 'No.7': '2nd_layer_C',
+            # '2nd_layer_C': ('brown', normal_line_width),
+            'top_layer_C': ('#4F0000', emphasis_line_width),
+            'top_layer_uppermid_C': ('#4F0000', normal_line_width),
+            'seran2_air_C': ('#7777ff', normal_line_width),
+            'seran2_layer_C': ('#3333ff', normal_line_width),
+            'seran3_air_C': ('#2222ff', normal_line_width),
+            # 'seran3_layer_C': ('#0000bf', normal_line_width),
+            'top_layer_lowermid_C': ('#FF0000', normal_line_width),
+            'top_layer_lowerleft_C': ('#FF7777', normal_line_width),
+        }
+        for temp_key in temp_colors__wid:
+            # if not in df, skip
+            if temp_key not in df:
+                continue
+
+            col, wid = temp_colors__wid[temp_key]
+            ax2.plot(df['Date/Time'], df[temp_key], label=temp_key, color=col)
+            ax2.get_lines()[-1].set_linewidth(wid)
+
+        if df_logger is not None:
+            for temp_key in temp_colors__wid:
+                # if not in df, skip
+                if temp_key not in df_logger:
+                    continue
+
+                col, wid = temp_colors__wid[temp_key]
+                ax2.plot(df_logger['Date/Time'], df_logger[temp_key], label=temp_key, color=col)
+                ax2.get_lines()[-1].set_linewidth(wid)
+
+        # legend bottom-left
+        ax2.legend(title='Temperature', loc='upper right')
+        ax2.set_xlabel('Time (HH:MM)')
+        ax2.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%H:%M'))
+        ax2.set_ylabel('Temperature (ºC)')
+        ax2.set_ylim(10, 60)
+        plt.setp(ax2.get_xticklabels(), rotation=45)
+
+        for adj_time, color, reason, linewidth in [
+            # ('13 May 2024, 17:57', 'blue', 'tip', 1),
+            # ('13 May 2024, 19:03', 'blue', 'fell', 1),
+        ]:
+            for a in [ax, ax2]:
+                a.axvline(pd.to_datetime(adj_time), color=color, linestyle='--', linewidth=linewidth)
+
+            # draw label of the reason on top graph
+            ax.text(
+                pd.to_datetime(adj_time) + pd.Timedelta(seconds=60),
+                750,
+                reason,
+                rotation=0,
+                color=color,
+            )
+            # and bottom
+            ax2.text(
+                pd.to_datetime(adj_time) + pd.Timedelta(seconds=60),
+                50,
+                reason,
+                rotation=0,
+                color=color,
+            )
+
+        # get max value of top_layer_C
+        max_temp, maxdf, maxkey = max(
+            (df['top_layer_uppermid_C'].max(), df, 'top_layer_uppermid_C'),
+            (df_logger['top_layer_lowerleft_C'].max(), df_logger, 'top_layer_lowerleft_C'),
+            (df_logger['top_layer_lowermid_C'].max(), df_logger, 'top_layer_lowermid_C'),
+        )
+        # draw dashed horizontal top_layer_C-colored line there
+        ax2.axhline(max_temp, color=temp_colors__wid[maxkey][0], linestyle='--', linewidth=2)
+
+        # draw vertical line where the top layer C is this max val
+        ax2.axvline(
+            maxdf[maxdf[maxkey] == max_temp]['Date/Time'].iloc[0],
+            color=temp_colors__wid[maxkey][0],
+            linestyle='--',
+            linewidth=2,
+        )
+
+        # write text of what time that is
+        # draw text above the line, "Max Temp=..."
+        ax2.text(
+            maxdf['Date/Time'].iloc[0] + pd.to_timedelta('20m'),
+            33,
+            f"Max {maxkey}  ={max_temp:.1f}ºC",
+            rotation=0,
+            color=temp_colors__wid[maxkey][0],
+        )
+
+        ax.grid(axis='y', linestyle='-', linewidth=0.5)
+        ax2.grid(axis='y', linestyle='-', linewidth=0.5)
+
+        # save to .png
+        plt.tight_layout()
+        dest_fn = os.path.join(run_dir, run_bit + '.png')
+        plt.savefig(
+            dest_fn,
+            dpi=300,
+        )
+
+        plt.show()
+
+    def a2seran_bigbox_hotair2(self, csv_fn='~/Downloads/pyrgepyran/2seran_bigbox_hotair2/2seran_bigbox_hotair2.csv'):
+        import matplotlib.pyplot as plt
+
+        title = "05 June 2024; Big Box, 2 serans, hot air on/off"
+
+        csv_fn = os.path.expanduser(csv_fn)
+        run_dir = os.path.dirname(csv_fn)
+        run_bit = os.path.basename(csv_fn).rsplit('.', 1)[0]
+
+        normal_line_width = 2
+        emphasis_line_width = 3
+
+        baseline_env_Wm2 = 540
+
+        temp_mappings = {
+            'No.5': 'inside_air_C',
+            'No.6': '3rd_layer_C',
+            'No.7': '2nd_layer_C',
+            'No.8': 'top_layer_uppermid_C',
+        }
+
+        logger_temp_mappings = {
+            # '1ch': 'NONE',
+            '1ch': 'seran3_layer_C',
+            '2ch': 'bigbox_inside_bottom_C',
+            '3ch': 'bigbox_inside_top_C',
+        }
+
+        df = load_and_process_csv(
+            csv_fn,
+            temp_mappings=temp_mappings,
+            baseline_env_Wm2=baseline_env_Wm2,
+            offset_secs=0,
+        )
+        df_logger = load_and_process_logger_txts(
+            run_dir,
+            temp_mappings=logger_temp_mappings,
+            offset_secs=0,
+        )
+
+        # # drop anything before 16:00
+        df = df[df['Date/Time'] > pd.to_datetime('05 June 2024, 16:05')]
+        df_logger = df_logger[df_logger['Date/Time'] > pd.to_datetime('05 June 2024, 16:05')]
+
+        # plot solar_in_Wm2 and ir_in_Wm2 on y axiw tih date on x
+        fig, ax = plt.subplots(
+            1,
+            1,
+            figsize=(12, 10),
+        )
+
+        ax.set_title(title)
+
+        to_plot = df['solar_in_Wm2']
+        ax.plot(df['Date/Time'], to_plot, label='Solar')
+        ax.get_lines()[-1].set_color('#DFDF00')
+        ax.get_lines()[-1].set_linewidth(normal_line_width)
+
+        # make a second left plot for just netir
+        ax3 = ax.twinx()
+        ax3.spines['right'].set_position(('axes', -0.15))
+
+        ax3.plot(df['Date/Time'], df['ir_net_Wm2'], label='Net IR')
+        ax3.get_lines()[-1].set_color('red')
+        ax3.get_lines()[-1].set_linewidth(normal_line_width)
+
+        # make a 3rd left plot for total
+        ax4 = ax.twinx()
+        ax4.spines['right'].set_position(('axes', -0.25))
+
+        # ax4.plot(df['Date/Time'], df['total_in_Wm2'], label='Solar + IR in')
+        # ax4.get_lines()[-1].set_color('gray')
+        # ax4.get_lines()[-1].set_linewidth(normal_line_width)
+
+        # ax.legend(title='Power', loc='upper right')
+
+        # set x axis formatter to HH:MM:SS
+        ax.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%H:%M:%S'))
+        ax3.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%H:%M:%S'))
+        ax4.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%H:%M:%S'))
+
+        # x axis label: time (HH:MM)
+        ax.set_xlabel('Time (HH:MM:SS)')
+
+        # y axis label: W/m^2
+        ax.set_ylabel('Solar (W/m^2)')
+        ax3.set_ylabel('Net IR (W/m^2)')
+        ax4.set_ylabel('Solar + IR In (W/m^2)')
+
+        ax1_wm2_min = 400
+        ax1_wm2_max = 800
+        ax.set_ylim(ax1_wm2_min, ax1_wm2_max)
+        ax1_wm2_range = ax1_wm2_max - ax1_wm2_min
+        # set y ticks every wm2_range / 8
+        ax.set_yticks(
+            [bit*(ax1_wm2_range/8) + ax1_wm2_min for bit in range(8+1)]
+        )
+
+        ax3_wm2_min = -300
+        ax3_wm2_max = 100
+        ax3.set_ylim(ax3_wm2_min, ax3_wm2_max)
+        ax3_wm2_range = ax3_wm2_max - ax3_wm2_min
+        # set y ticks every wm2_range / 8
+        ax3.set_yticks(
+            [bit*(ax3_wm2_range/8) + ax3_wm2_min for bit in range(8+1)]
+        )
+
+        ax4_wm2_min = 1000
+        ax4_wm2_max = 1400
+        ax4.set_ylim(ax4_wm2_min, ax4_wm2_max)
+        ax4_wm2_range = ax4_wm2_max - ax4_wm2_min
+        # set y ticks every wm2_range / 8
+        ax4.set_yticks(
+            [bit*(ax4_wm2_range/8) + ax4_wm2_min for bit in range(8+1)]
+        )
+
+        # # draw red horizontal line at 0
+        # ax.axhline(0, color='red', linestyle='--', linewidth=1)
+
+        # rotate x axis labels
+        plt.setp(ax.get_xticklabels(), rotation=45)
+
+        # make a 2nd y-axis on ax plot
+        ax2 = ax.twinx()
+
+        temp_colors__wid = {
+            'thermistor_T_C': ('#ff33ff', normal_line_width),
+            'inside_air_C': ('cyan', normal_line_width),
+            'aluminum_C': ('gray', normal_line_width),
+            'styro_5mm_C': ('brown', normal_line_width),
+            'styro_surf_C': ('#4F0000', emphasis_line_width),
+            '3rd_layer_C': ('gray', normal_line_width),
+            # 'No.7': '2nd_layer_C',
+            '2nd_layer_C': ('brown', normal_line_width),
+            'top_layer_C': ('#4F0000', emphasis_line_width),
+            'top_layer_uppermid_C': ('#4F0000', normal_line_width),
+            'seran2_air_C': ('#7777ff', normal_line_width),
+            'seran2_layer_C': ('#3333ff', normal_line_width),
+            'seran3_air_C': ('#2222ff', normal_line_width),
+            'seran3_layer_C': ('#0000bf', normal_line_width),
+            'top_layer_lowermid_C': ('#FF0000', normal_line_width),
+            'top_layer_lowerleft_C': ('#FF7777', normal_line_width),
+
+            'bigbox_inside_bottom_C': ('#88cc88', normal_line_width),
+            'bigbox_inside_top_C': ('#bbffbb', normal_line_width),
+        }
+        for temp_key in temp_colors__wid:
+            # if not in df, skip
+            if temp_key not in df:
+                continue
+
+            col, wid = temp_colors__wid[temp_key]
+            ax2.plot(df['Date/Time'], df[temp_key], label=temp_key, color=col)
+            ax2.get_lines()[-1].set_linewidth(wid)
+
+        if df_logger is not None:
+            for temp_key in temp_colors__wid:
+                # if not in df, skip
+                if temp_key not in df_logger:
+                    continue
+
+                col, wid = temp_colors__wid[temp_key]
+                ax2.plot(df_logger['Date/Time'], df_logger[temp_key], label=temp_key, color=col)
+                ax2.get_lines()[-1].set_linewidth(wid)
+
+        # legend bottom-left
+        ax2.legend(title='Temperature', loc='upper right')
+        ax2.set_xlabel('Time (HH:MM:SS)')
+        ax2.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%H:%M:%S'))
+        ax2.set_ylabel('Temperature (ºC)')
+
+        cymin = 30
+        cymax = 130
+        cyrange = cymax - cymin
+        ax2.set_ylim(cymin, cymax)
+        # set 8th ticks
+        ax2.set_yticks(
+            [bit*(cyrange/8) + cymin for bit in range(8+1)]
+        )
+
+        plt.setp(ax2.get_xticklabels(), rotation=45)
+        #
+
+        for adj_time, color, reason, linewidth in [
+            ('05 Jun 2024, 16:13:06', 'darkgreen', '', 1),
+            ('05 Jun 2024, 16:13:22', 'darkorange', '', 1),
+            ('05 Jun 2024, 16:13:24', 'darkred', '', 1),
+            ('05 Jun 2024, 16:13:42', 'orange', '', 1),
+
+            ('05 Jun 2024, 16:40:11', 'darkgreen', '', 1),
+            ('05 Jun 2024, 16:40:30', 'darkorange', '', 1),
+            ('05 Jun 2024, 16:41:15', 'darkred', '', 1),
+            ('05 Jun 2024, 16:41:36', 'orange', '', 1),
+
+            ('05 Jun 2024, 16:46:10', 'darkgreen', '', 1),
+            ('05 Jun 2024, 16:46:26', 'darkorange', '', 1),
+            ('05 Jun 2024, 16:47:01', 'darkred', '', 1),
+            ('05 Jun 2024, 16:47:07', 'orange', '', 1),
+
+            ('05 Jun 2024, 16:48:55', 'darkgreen', '', 1),
+            ('05 Jun 2024, 16:49:02', 'darkorange', '', 1),
+            ('05 Jun 2024, 16:50:15', 'darkred', '', 1),
+            ('05 Jun 2024, 16:50:21', 'orange', '', 1),
+
+            ('05 Jun 2024, 16:51:29', 'darkgreen', '', 1),
+            ('05 Jun 2024, 16:51:47', 'darkorange', '', 1),
+            ('05 Jun 2024, 16:52:54', 'darkred', '', 1),
+            ('05 Jun 2024, 16:53:12', 'orange', '', 1),
+
+            ('05 Jun 2024, 16:58:26', 'darkgreen', '', 1),
+            ('05 Jun 2024, 16:58:42', 'darkorange', '', 1),
+            ('05 Jun 2024, 16:59:39', 'darkred', '', 1),
+            ('05 Jun 2024, 16:59:56', 'orange', '', 1),
+        ]:
+            for a in [ax, ax2]:
+                a.axvline(pd.to_datetime(adj_time), color=color, linestyle='--', linewidth=linewidth)
+
+            # draw label of the reason on top graph
+            ax.text(
+                pd.to_datetime(adj_time) + pd.Timedelta(seconds=5),
+                1000,
+                reason,
+                rotation=0,
+                color=color,
+            )
+
+        ax.grid(axis='y', linestyle='-', linewidth=0.5)
+        ax2.grid(axis='y', linestyle='-', linewidth=0.5)
+
+        # place ax legend on top-left and ax2 on top-right
+        ax.legend(title='Power', loc='upper left')
+        ax2.legend(title='Temperature', loc='upper right')
 
         # save to .png
         plt.tight_layout()
